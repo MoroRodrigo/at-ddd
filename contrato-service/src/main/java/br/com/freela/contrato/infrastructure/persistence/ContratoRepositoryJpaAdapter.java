@@ -1,13 +1,15 @@
 package br.com.freela.contrato.infrastructure.persistence;
 
-import br.com.freela.contrato.domain.model.Contrato;
-import br.com.freela.contrato.domain.repository.ContratoRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Repository;
+
+import br.com.freela.contrato.domain.model.Contrato;
+import br.com.freela.contrato.domain.repository.ContratoRepository;
 
 @Repository
 public class ContratoRepositoryJpaAdapter implements ContratoRepository {
@@ -16,10 +18,10 @@ public class ContratoRepositoryJpaAdapter implements ContratoRepository {
     public ContratoRepositoryJpaAdapter(SpringDataContratoRepository jpa) { this.jpa = jpa; }
 
     @Override public Contrato salvar(Contrato c) {
-        log.info("contrato.persistence.save.inicio contratoId={} status={}", c.id(), c.status());
+        log.info("contrato.persistence.save.inicio contratoId={} status={} version={}", c.id(), c.status(), c.version());
         var entity = new ContratoJpaEntity(c.id(), c.clienteId(), c.freelancerId(), c.titulo(), c.valor(), c.status(), c.criadoEm());
         var saved = jpa.save(entity);
-        log.info("contrato.persistence.save.sucesso contratoId={} status={}", saved.getId(), saved.getStatus());
+        log.info("contrato.persistence.save.sucesso contratoId={} status={} version={}", saved.getId(), saved.getStatus(), saved.getVersion());
         return toDomain(saved);
     }
     @Override public Optional<Contrato> buscarPorId(UUID id) {
@@ -31,6 +33,6 @@ public class ContratoRepositoryJpaAdapter implements ContratoRepository {
         return jpa.findAll().stream().map(this::toDomain).toList();
     }
     private Contrato toDomain(ContratoJpaEntity e) {
-        return Contrato.restaurar(e.getId(), e.getClienteId(), e.getFreelancerId(), e.getTitulo(), e.getValor(), e.getStatus(), e.getCriadoEm());
+        return Contrato.restaurar(e.getId(), e.getClienteId(), e.getFreelancerId(), e.getTitulo(), e.getValor(), e.getStatus(), e.getCriadoEm(), e.getVersion());
     }
 }

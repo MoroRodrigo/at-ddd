@@ -41,8 +41,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
-      timeout: 10s
+      timeout: 30s
       retries: 15
+      start_period: 60s
     networks: [freela-net]
 
   kafka-ui:
@@ -58,8 +59,55 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
     networks: [freela-net]
 
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: freela-zipkin
+    ports:
+      - "9411:9411"
+    networks: [freela-net]
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: freela-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks: [freela-net]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: freela-grafana
+    depends_on:
+      - loki
+      - zipkin
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [freela-net]
+
+  alloy:
+    image: grafana/alloy:v1.5.1
+    container_name: freela-alloy
+    command: run /etc/alloy/config.alloy
+    depends_on:
+      - loki
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [freela-net]
+
 volumes:
   postgres_data:
+  loki_data:
+  grafana_data:
 
 networks:
   freela-net:

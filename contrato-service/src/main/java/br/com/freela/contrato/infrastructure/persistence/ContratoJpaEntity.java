@@ -10,6 +10,7 @@ import java.util.UUID;
 @Table(name = "contratos")
 public class ContratoJpaEntity {
     @Id private UUID id;
+    @Version private long version;
     @Column(nullable=false) private UUID clienteId;
     @Column(nullable=false) private UUID freelancerId;
     @Column(nullable=false, length=160) private String titulo;
@@ -20,6 +21,6 @@ public class ContratoJpaEntity {
     public ContratoJpaEntity(UUID id, UUID clienteId, UUID freelancerId, String titulo, BigDecimal valor, StatusContrato status, Instant criadoEm) {
         this.id=id; this.clienteId=clienteId; this.freelancerId=freelancerId; this.titulo=titulo; this.valor=valor; this.status=status; this.criadoEm=criadoEm;
     }
-    public UUID getId(){return id;} public UUID getClienteId(){return clienteId;} public UUID getFreelancerId(){return freelancerId;}
+    public UUID getId(){return id;} public long getVersion(){return version;} public UUID getClienteId(){return clienteId;} public UUID getFreelancerId(){return freelancerId;}
     public String getTitulo(){return titulo;} public BigDecimal getValor(){return valor;} public StatusContrato getStatus(){return status;} public Instant getCriadoEm(){return criadoEm;}
 }

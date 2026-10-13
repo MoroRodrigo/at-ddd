@@ -1,13 +1,14 @@
 package br.com.freela.contrato.domain.model;
 
-import br.com.freela.contrato.domain.event.ContratoCriado;
-import br.com.freela.contrato.domain.shared.DomainEvent;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+
+import br.com.freela.contrato.domain.event.ContratoCriado;
+import br.com.freela.contrato.domain.shared.DomainEvent;
 
 public class Contrato {
     private final UUID id;
@@ -17,12 +18,13 @@ public class Contrato {
     private final BigDecimal valor;
     private StatusContrato status;
     private final Instant criadoEm;
+    private long version;
     private final List<DomainEvent> domainEvents = new ArrayList<>();
 
     private Contrato(UUID id, UUID clienteId, UUID freelancerId, String titulo,
-                     BigDecimal valor, StatusContrato status, Instant criadoEm) {
+                     BigDecimal valor, StatusContrato status, Instant criadoEm, long version) {
         this.id = id; this.clienteId = clienteId; this.freelancerId = freelancerId;
-        this.titulo = titulo; this.valor = valor; this.status = status; this.criadoEm = criadoEm;
+        this.titulo = titulo; this.valor = valor; this.status = status; this.criadoEm = criadoEm; this.version = version;
     }
 
     public static Contrato criar(UUID clienteId, UUID freelancerId, String titulo, BigDecimal valor) {
@@ -30,33 +32,47 @@ public class Contrato {
         if (titulo == null || titulo.isBlank()) throw new IllegalArgumentException("Título é obrigatório");
         if (valor == null || valor.signum() <= 0) throw new IllegalArgumentException("Valor deve ser positivo");
         var contrato = new Contrato(UUID.randomUUID(), clienteId, freelancerId, titulo.trim(), valor,
-                StatusContrato.ATIVO, Instant.now());
-        contrato.domainEvents.add(ContratoCriado.novo(contrato));
+                StatusContrato.ATIVO, Instant.now(), 0L);
+        contrato.registrarEvento(ContratoCriado.novo(contrato, 1, null));
         return contrato;
     }
 
     public static Contrato restaurar(UUID id, UUID clienteId, UUID freelancerId, String titulo,
-                                     BigDecimal valor, StatusContrato status, Instant criadoEm) {
-        return new Contrato(id, clienteId, freelancerId, titulo, valor, status, criadoEm);
+                                     BigDecimal valor, StatusContrato status, Instant criadoEm, long version) {
+        return new Contrato(id, clienteId, freelancerId, titulo, valor, status, criadoEm, version);
     }
 
-    public void registrarEntrega() {
+    public void registrarEntrega(String correlationId) {
         if (status != StatusContrato.ATIVO) throw new IllegalStateException("Somente contratos ativos recebem entrega");
         status = StatusContrato.ENTREGA_REGISTRADA;
+        version++;
+        registrarEvento(br.com.freela.contrato.domain.event.EntregaRegistrada.novo(this, version, correlationId));
     }
-    public void concluir() {
+
+    public void concluir(String correlationId) {
         if (status != StatusContrato.ENTREGA_REGISTRADA) throw new IllegalStateException("A entrega precisa estar registrada");
         status = StatusContrato.CONCLUIDO;
+        version++;
+        registrarEvento(br.com.freela.contrato.domain.event.ContratoConcluido.novo(this, version, correlationId));
     }
-    public void cancelar() {
+
+    public void cancelar(String correlationId) {
         if (status == StatusContrato.CONCLUIDO) throw new IllegalStateException("Contrato concluído não pode ser cancelado");
+        if (status == StatusContrato.CANCELADO) throw new IllegalStateException("Contrato já está cancelado");
         status = StatusContrato.CANCELADO;
+        version++;
+        registrarEvento(br.com.freela.contrato.domain.event.ContratoCancelado.novo(this, version, correlationId));
     }
+
+    private void registrarEvento(DomainEvent event) {
+        domainEvents.add(event);
+    }
+
     public List<DomainEvent> pullDomainEvents() {
         var copy = List.copyOf(domainEvents); domainEvents.clear(); return copy;
     }
     public List<DomainEvent> domainEvents() { return Collections.unmodifiableList(domainEvents); }
     public UUID id(){return id;} public UUID clienteId(){return clienteId;} public UUID freelancerId(){return freelancerId;}
     public String titulo(){return titulo;} public BigDecimal valor(){return valor;} public StatusContrato status(){return status;}
-    public Instant criadoEm(){return criadoEm;}
+    public Instant criadoEm(){return criadoEm;} public long version(){return version;}
 }

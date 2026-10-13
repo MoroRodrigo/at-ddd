@@ -485,4 +485,149 @@ PostgreSQL 16
 Apache Kafka 4
 Docker Compose
 Maven
+``` 
+
+## Contratos de eventos e tópicos
+
+O `contrato-service` publica eventos em um único tópico:
+
+```text
+freela.contratos.eventos.v1
 ```
+
+Com chave de particionamento baseada em `contratoId` para garantir que eventos do mesmo contrato permaneçam na mesma partição e sejam consumidos em ordem.
+
+### Eventos publicados
+
+| Evento | Tópico | Produtor | Consumidores | Chave |
+|---|---|---|---|---|
+| `ContratoCriado` | `freela.contratos.eventos.v1` | `contrato-service` | `notificacao-service`, `reputacao-service`, `auditoria-service` | `contratoId` |
+| `EntregaRegistrada` | `freela.contratos.eventos.v1` | `contrato-service` | `notificacao-service`, `auditoria-service` | `contratoId` |
+| `ContratoConcluido` | `freela.contratos.eventos.v1` | `contrato-service` | `notificacao-service`, `reputacao-service`, `auditoria-service` | `contratoId` |
+| `ContratoCancelado` | `freela.contratos.eventos.v1` | `contrato-service` | `notificacao-service`, `auditoria-service` | `contratoId` |
+
+### Estrutura do envelope
+
+```json
+{
+  "eventId": "1f5f4c77-9b7b-4d48-8df5-aec3d9f02a48",
+  "eventType": "ContratoConcluido",
+  "contratoId": "a7d5f5f2-31d7-4978-b7f2-07b7d7aa4e8f",
+  "occurredAt": "2026-10-12T00:00:00Z",
+  "correlationId": "c5af75de-5b31-456f-86d5-69771b24cd56",
+  "aggregateVersion": 2,
+  "schemaVersion": "v1",
+  "payload": {
+    "clienteId": "11111111-1111-1111-1111-111111111111",
+    "freelancerId": "22222222-2222-2222-2222-222222222222",
+    "titulo": "Construção de API de pagamentos",
+    "valor": 3500.00,
+    "status": "CONCLUIDO"
+  }
+}
+```
+
+## Estratégia de Transactional Outbox
+
+A publicação assíncrona é feita por meio do padrão Transactional Outbox no `contrato-service`.
+
+- Cada alteração de domínio gera eventos em `Contrato`.
+- O `ContratoApplicationService` persiste o aggregate e registra o evento no `OutboxEventEntity` na mesma transação.
+- O `ContratoEventPublisher` consulta itens pendentes e envia para Kafka em um scheduler.
+- O status do evento é atualizado para `PUBLISHED` após sucesso e mantém `attempts`/`failureDetails` em caso de erro.
+
+Arquivos principais:
+
+- [contrato-service/src/main/java/br/com/freela/contrato/application/ContratoApplicationService.java](contrato-service/src/main/java/br/com/freela/contrato/application/ContratoApplicationService.java)
+- [contrato-service/src/main/java/br/com/freela/contrato/infrastructure/outbox/OutboxEventEntity.java](contrato-service/src/main/java/br/com/freela/contrato/infrastructure/outbox/OutboxEventEntity.java)
+- [contrato-service/src/main/java/br/com/freela/contrato/infrastructure/messaging/ContratoEventPublisher.java](contrato-service/src/main/java/br/com/freela/contrato/infrastructure/messaging/ContratoEventPublisher.java)
+
+## Idempotência persistente e retry/DLT
+
+Cada serviço consumidor usa o `eventId` como identificador único para bloquear reprocessamento duplicado:
+
+- `notificacao-service`: `NotificacaoRepository.existsByEventId()`
+- `reputacao-service`: `ReputacaoEventoProcessadoRepository.existsByEventId()`
+- `auditoria-service`: `EventoAuditoriaRepository.existsByEventId()`
+
+A falha no consumo usa `DefaultErrorHandler` com backoff fixo e publicação em DLT, com tópicos como:
+
+```text
+freela.contratos.notificacao.dlt.v1
+freela.contratos.reputacao.dlt.v1
+freela.contratos.auditoria.dlt.v1
+```
+
+## Logs centralizados e tracing
+
+Os serviços registram logs com o `service`, `traceId`, `spanId`, `correlationId` e identificadores de contrato/evento.
+
+A propagação de correlação é feita em duas camadas:
+
+- HTTP: `X-Correlation-Id` no Gateway e nos controllers.
+- Kafka: header `X-Correlation-Id` no `ContratoEventPublisher` e leitura em cada `@KafkaListener`.
+
+O projeto envia spans para Zipkin por meio do Micrometer + Brave e da configuração em cada arquivo `application.yml`.
+
+## Inicialização do ambiente
+
+```bash
+cd infra
+docker compose up -d
+```
+
+Verificação:
+
+```bash
+cd infra
+docker compose ps
+docker compose config
+```
+
+Encerramento:
+
+```bash
+cd infra
+docker compose down
+```
+
+Remoção de volumes:
+
+```bash
+cd infra
+docker compose down -v
+```
+
+## Checklist de verificação da AT
+
+| Rubrica da AT | Implementação | Evidência |
+|---|---|---|
+| Comunicação baseada em eventos | `ContratoEventPublisher`, `ContratoKafkaConfiguration`, `DomainEventEnvelope` | Publica em `freela.contratos.eventos.v1` e mantém chave por contrato |
+| Integração dos serviços | `NotificacaoEventConsumer`, `ReputacaoEventConsumer`, `AuditoriaEventConsumer` | Cada serviço consome o tópico e persiste o evento |
+| Especificação das mensagens | `docs/arquitetura-eventos.md` e seção acima | Descreve payload, campos e exemplos |
+| Concorrência e ordenação | chave `contratoId` e `@KafkaListener` com `concurrency` | Mantém ordem por contrato em partição |
+| Duplicidade | `existsByEventId` nos serviços | Reprocessamento idempotente sem duplicação |
+| Logs e centralização | `logging.pattern` + Alloy + Loki + Grafana | Logs do serviço e observabilidade centralizada |
+| Rastreamento distribuído | Micrometer + Zipkin + `X-Correlation-Id` | Spans exportados para Zipkin |
+| Tratamento de falhas | DLT e `DefaultErrorHandler` | Mensagens em DLT para diagnóstico e retry |
+| Infraestrutura | `infra/docker-compose.yml` | PostgreSQL + Kafka + Kafka UI + Zipkin + Loki + Grafana |
+| Documentação | `README.md` + `docs/arquitetura-eventos.md` | Instruções, tópicos e matrizes de evidência |
+| Validação | `mvn clean verify` + testes unitários | Resultado executado e documentado |
+
+## Verificação executada
+
+Comandos executados no projeto:
+
+```bash
+cd "C:\Users\rodri\Downloads\at-ddd"
+mvn -pl contrato-service -Dtest=ContratoDomainTest test -DfailIfNoTests=false
+mvn clean verify
+cd infra
+docker compose config
+```
+
+Resultados verificados:
+
+- `ContratoDomainTest`: 3 testes, 0 falhas, 0 erros.
+- Build do reator: `BUILD SUCCESS` para todos os módulos.
+- Compose: configuração do Docker validada sem erros de sintaxe do arquivo YAML.
